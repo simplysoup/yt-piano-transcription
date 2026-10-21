@@ -1,10 +1,19 @@
 import math
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 import pretty_midi
 
-from scoreify import detect_ornaments, fit_beat_phase, nearest_grid_beat, parse_meter, parse_swing_ratio
+from scoreify import (
+    detect_ornaments,
+    fit_beat_phase,
+    nearest_grid_beat,
+    parse_meter,
+    parse_swing_ratio,
+    write_midi_preserving_times,
+)
 
 
 class ScoreifyTests(unittest.TestCase):
@@ -29,6 +38,20 @@ class ScoreifyTests(unittest.TestCase):
         delta = abs(fitted - true_phase)
         delta = min(delta, beat - delta)
         self.assertLess(delta, beat / 100)
+
+    def test_preserve_writer_keeps_absolute_note_times(self):
+        performance = pretty_midi.PrettyMIDI(initial_tempo=120)
+        instrument = pretty_midi.Instrument(program=0, name="Piano")
+        instrument.notes.append(pretty_midi.Note(velocity=80, pitch=64, start=1.721, end=1.903))
+        performance.instruments.append(instrument)
+        item = {"id": 0, "instrument": 0, "note": instrument.notes[0]}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "preserved.mid"
+            write_midi_preserving_times(performance, [item], path, (4, 4))
+            result = pretty_midi.PrettyMIDI(str(path))
+            note = result.instruments[0].notes[0]
+            self.assertAlmostEqual(note.start, 1.721, places=2)
+            self.assertAlmostEqual(note.end, 1.903, places=2)
 
     def test_flags_short_stepwise_run_before_long_note(self):
         starts = [0.0, 0.08, 0.16, 0.25]

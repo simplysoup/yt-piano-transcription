@@ -199,12 +199,44 @@ def build_score_midi(items: list[dict], output_path: Path, bpm: float, meter: tu
     result.write(str(output_path))
 
 
-def create_score_outputs(midi_path: Path, output_dir: Path, title: str, bpm: float,
+def write_midi_preserving_times(performance: pretty_midi.PrettyMIDI, items: list[dict],
+                                output_path: Path, meter: tuple[int, int],
+                                omit_ids: set[int] | None = None) -> None:
+    omit_ids = omit_ids or set()
+    tempos = performance.get_tempo_changes()[1]
+    initial_tempo = float(tempos[0]) if len(tempos) else 120.0
+    result = pretty_midi.PrettyMIDI(initial_tempo=initial_tempo, resolution=performance.resolution)
+    result.time_signature_changes.append(pretty_midi.TimeSignature(meter[0], meter[1], time=0.0))
+    for instrument_index, source_instrument in enumerate(performance.instruments):
+        target = pretty_midi.Instrument(
+            program=source_instrument.program,
+            is_drum=source_instrument.is_drum,
+            name=source_instrument.name or "Piano",
+        )
+        for item in items:
+            if item["instrument"] != instrument_index or item["id"] in omit_ids:
+                continue
+            source_note = item["note"]
+            target.notes.append(pretty_midi.Note(
+                velocity=source_note.velocity,
+                pitch=source_note.pitch,
+                start=source_note.start,
+                end=source_note.end,
+            ))
+        result.instruments.append(target)
+    result.write(str(output_path))
+
+
+def create_score_outputs(midi_path: Path, output_dir: Path, title: str, bpm: float | None,
                          meter_text: str, swing_ratio: float, grid_divisions: int,
                          beat_offset: float | None, split_pitch: int,
                          key_text: str | None = None, musescore: str | None = None,
-                         skip_pdf: bool = False) -> dict:
-    if bpm < 40 or bpm > 300:
+                         skip_pdf: bool = False, timing_mode: str = "preserve") -> dict:
+    if timing_mode not in ("preserve", "grid"):
+        raise ValueError("timing mode must be 'preserve' or 'grid'")
+    if timing_mode == "grid" and bpm is None:
+        raise ValueError("grid timing mode requires a BPM")
+    if bpm is not None and (bpm < 40 or bpm > 300):
         raise ValueError("BPM must be between 40 and 300")
     if grid_divisions not in (2, 4, 8):
         raise ValueError("grid divisions must be 2, 4, or 8 per beat")
@@ -221,13 +253,20 @@ def create_score_outputs(midi_path: Path, output_dir: Path, title: str, bpm: flo
     if not items:
         raise RuntimeError("Transkun MIDI contains no note events")
 
-    beat_seconds = 60.0 / bpm
+    # In preserve mode this beat length is only a heuristic scale for flagging
+    # ornament candidates; note times are not snapped or shifted.
+    analysis_beat_seconds = 60.0 / (bpm or 120.0)
     onset_clusters = cluster_onsets(items, tolerance=0.045)
     cluster_times = [float(np.median([item["note"].start for item in cluster])) for cluster in onset_clusters]
-    phase = beat_offset if beat_offset is not None else fit_beat_phase(
-        cluster_times, beat_seconds, swing_ratio, grid_divisions
-    )
-    ornaments = detect_ornaments(items, beat_seconds, split_pitch)
+    if timing_mode == "grid":
+        beat_seconds = 60.0 / bpm
+        phase = beat_offset if beat_offset is not None else fit_beat_phase(
+            cluster_times, beat_seconds, swing_ratio, grid_divisions
+        )
+    else:
+        beat_seconds = analysis_beat_seconds
+        phase = None
+    ornaments = detect_ornaments(items, analysis_beat_seconds, split_pitch)
     ornament_ids = {note_id for group in ornaments for note_id in group["note_ids"]}
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -239,32 +278,40 @@ def create_score_outputs(midi_path: Path, output_dir: Path, title: str, bpm: flo
     full_pdf = output_dir / "score.pdf"
     simplified_pdf = output_dir / "score_simplified.pdf"
 
-    build_score_midi(items, score_mid, bpm, meter, beat_seconds, phase, swing_ratio, grid_divisions)
-    build_score_midi(items, simplified_mid, bpm, meter, beat_seconds, phase, swing_ratio,
-                     grid_divisions, omit_ids=ornament_ids)
-    # Separate candidate ornament notes into their own playable MIDI track/file.
+    # Keep the literal performance as the default score MIDI. The grid mode is
+    # an explicit alternate; it may move notes by design.
     ornament_items = [item for item in items if item["id"] in ornament_ids]
-    build_score_midi(ornament_items, ornaments_mid, bpm, meter, beat_seconds, phase,
-                     swing_ratio, grid_divisions)
+    if timing_mode == "preserve":
+        shutil.copy2(midi_path, score_mid)
+        write_midi_preserving_times(performance, items, simplified_mid, meter, omit_ids=ornament_ids)
+        write_midi_preserving_times(performance, ornament_items, ornaments_mid, meter)
+    else:
+        build_score_midi(items, score_mid, bpm, meter, beat_seconds, phase, swing_ratio, grid_divisions)
+        build_score_midi(items, simplified_mid, bpm, meter, beat_seconds, phase, swing_ratio,
+                         grid_divisions, omit_ids=ornament_ids)
+        build_score_midi(ornament_items, ornaments_mid, bpm, meter, beat_seconds, phase,
+                         swing_ratio, grid_divisions)
     ornaments_json = output_dir / "ornaments.json"
     ornaments_json.write_text(json.dumps({
         "method": "conservative upper-register short-run heuristic; review before deleting",
-        "bpm": bpm,
+        "timing_mode": timing_mode,
+        "bpm": bpm if timing_mode == "grid" else None,
         "meter": meter_text,
-        "swing_ratio": f"{swing_ratio}:1",
+        "swing_ratio": f"{swing_ratio}:1" if timing_mode == "grid" else None,
         "groups": ornaments,
     }, indent=2) + "\n", encoding="utf-8")
 
-    swing_text = f"Swing {swing_ratio:g}:1" if swing_ratio > 1.01 else None
+    swing_text = f"Swing {swing_ratio:g}:1" if timing_mode == "grid" and swing_ratio > 1.01 else None
+    score_tempo = bpm if timing_mode == "grid" else None
     if key_text is None:
         from music21 import converter
         inferred_key = converter.parse(str(score_mid)).analyze("key")
         key_text = f"{inferred_key.tonic.name} {inferred_key.mode}"
 
     make_musicxml(score_mid, full_xml, title, meter_text, 0, split_pitch,
-                  swing_text=swing_text, tempo_bpm=bpm, key_text=key_text)
+                  swing_text=swing_text, tempo_bpm=score_tempo, key_text=key_text)
     make_musicxml(simplified_mid, simplified_xml, title + " (simplified)", meter_text, 0, split_pitch,
-                  swing_text=swing_text, tempo_bpm=bpm, key_text=key_text)
+                  swing_text=swing_text, tempo_bpm=score_tempo, key_text=key_text)
 
     if not skip_pdf:
         if musescore is None:
@@ -276,19 +323,23 @@ def create_score_outputs(midi_path: Path, output_dir: Path, title: str, bpm: flo
         render_pdf(simplified_xml, simplified_pdf, musescore)
 
     residuals = []
-    for cluster_time in cluster_times:
-        quantized = nearest_grid_beat(cluster_time, beat_seconds, phase, swing_ratio, grid_divisions)
-        reconstructed = phase + quantized * beat_seconds
-        residuals.append(abs(cluster_time - reconstructed))
+    if timing_mode == "grid":
+        for cluster_time in cluster_times:
+            quantized = nearest_grid_beat(cluster_time, beat_seconds, phase, swing_ratio, grid_divisions)
+            reconstructed = phase + quantized * beat_seconds
+            residuals.append(abs(cluster_time - reconstructed))
+    else:
+        residuals = [0.0]
     diagnostics = {
         "input_note_count": len(items),
         "ornament_candidate_notes": len(ornament_ids),
         "ornament_candidate_groups": len(ornaments),
-        "bpm": bpm,
+        "timing_mode": timing_mode,
+        "bpm": bpm if timing_mode == "grid" else None,
         "meter": meter_text,
-        "swing_ratio": f"{swing_ratio}:1",
+        "swing_ratio": f"{swing_ratio}:1" if timing_mode == "grid" else None,
         "key": key_text,
-        "beat_offset_seconds": round(phase, 4),
+        "beat_offset_seconds": round(phase, 4) if phase is not None else None,
         "median_onset_adjustment_ms": round(float(np.median(residuals)) * 1000, 1),
         "p90_onset_adjustment_ms": round(float(np.quantile(residuals, 0.9)) * 1000, 1),
         "score_mid": str(score_mid),
@@ -304,16 +355,18 @@ def create_score_outputs(midi_path: Path, output_dir: Path, title: str, bpm: flo
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Beat-grid and swing-aware cleanup of Transkun piano MIDI")
+    parser = argparse.ArgumentParser(description="Preserve Transkun performance timing or create an explicit grid-based score variant")
     parser.add_argument("midi", type=Path, help="Transkun performance MIDI; it is never modified")
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--title", default="Piano transcription")
-    parser.add_argument("--bpm", type=float, help="quarter-note BPM; omit to estimate with librosa")
+    parser.add_argument("--timing-mode", choices=("preserve", "grid"), default="preserve",
+                        help="preserve note times (default) or opt into global tempo/grid snapping")
+    parser.add_argument("--bpm", type=float, help="grid-mode quarter-note BPM; omit to estimate with librosa")
     parser.add_argument("--meter", default="4/4", help="score meter (default 4/4; verify for each piece)")
     parser.add_argument("--swing-ratio", default="1:1", help="long:short eighth ratio, e.g. 2:1; use 1:1 for straight")
     parser.add_argument("--key", help="key signature override, e.g. 'C major'; default is inferred")
-    parser.add_argument("--grid-divisions", type=int, default=4, help="notation grid divisions per beat: 2, 4, or 8")
-    parser.add_argument("--beat-offset", type=float, help="manual beat-zero offset in seconds; default fits onset grid")
+    parser.add_argument("--grid-divisions", type=int, default=4, help="grid-mode notation divisions per beat: 2, 4, or 8")
+    parser.add_argument("--beat-offset", type=float, help="grid-mode beat-zero offset; default fits onset grid")
     parser.add_argument("--split-pitch", type=int, default=60)
     parser.add_argument("--musescore", help="MuseScore executable/path")
     parser.add_argument("--skip-pdf", action="store_true")
@@ -325,17 +378,17 @@ def main() -> int:
     args = parser.parse_args()
     try:
         bpm = args.bpm
-        if bpm is None:
+        if args.timing_mode == "grid" and bpm is None:
             wav = args.output_dir / "audio.wav"
             if not wav.is_file():
-                parser.error("--bpm is required unless audio.wav exists in --output-dir for tempo estimation")
+                parser.error("grid mode needs --bpm or audio.wav in --output-dir for tempo estimation")
             bpm = estimate_bpm(wav)
             print(f"Estimated tempo: {bpm:.1f} BPM (verify; beat trackers can choose half/double time).", file=sys.stderr)
         ratio = parse_swing_ratio(args.swing_ratio)
         create_score_outputs(
             args.midi.expanduser().resolve(), args.output_dir.expanduser().resolve(), args.title,
             bpm, args.meter, ratio, args.grid_divisions, args.beat_offset, args.split_pitch,
-            args.key, args.musescore, args.skip_pdf,
+            args.key, args.musescore, args.skip_pdf, args.timing_mode,
         )
     except (RuntimeError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)

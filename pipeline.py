@@ -185,10 +185,8 @@ def make_musicxml(
         part.makeNotation(inPlace=True)
         score.insert(0, part)
 
-    # Preserve source tempo marks only if the score stage did not set a fixed tempo.
-    if tempo_bpm is None:
-        for mark in parsed.recurse().getElementsByClass(tempo.MetronomeMark):
-            score.insert(float(mark.getOffsetInHierarchy(parsed)), mark)
+    # Do not print the MIDI file's default tempo as a score tempo. Transkun's
+    # constant 120 BPM MIDI tempo is only a timing encoding, not a musical claim.
 
     score.insert(
         0,
@@ -239,11 +237,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", required=True, type=Path, help="directory for all pipeline outputs")
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu", help="Transkun inference device")
     parser.add_argument("--meter", default="4/4", help="score time signature; verify/override for each piece (default: 4/4)")
-    parser.add_argument("--score-bpm", type=float, help="score tempo; omit to estimate from audio (verify half/double-time errors)")
-    parser.add_argument("--swing-ratio", default="1:1", help="long:short eighth ratio, e.g. 2:1; 1:1 is straight")
+    parser.add_argument("--timing-mode", choices=("preserve", "grid"), default="preserve",
+                        help="preserve Transkun event times (default) or opt into a global rhythmic grid")
+    parser.add_argument("--score-bpm", type=float, help="grid-mode tempo; omit to estimate from audio")
+    parser.add_argument("--swing-ratio", default="1:1", help="grid-mode long:short eighth ratio; 1:1 is straight")
     parser.add_argument("--key", help="key signature override, e.g. 'C major'; default is inferred from MIDI")
-    parser.add_argument("--grid-divisions", type=int, default=4, help="score grid divisions per beat: 2, 4, or 8")
-    parser.add_argument("--beat-offset", type=float, help="manual beat-zero offset in seconds; default fits the note onsets")
+    parser.add_argument("--grid-divisions", type=int, default=4, help="grid-mode divisions per beat: 2, 4, or 8")
+    parser.add_argument("--beat-offset", type=float, help="grid-mode beat-zero offset in seconds; default fits note onsets")
     parser.add_argument(
         "--split-pitch",
         type=int,
@@ -294,6 +294,8 @@ def main() -> int:
             title,
             "--meter",
             args.meter,
+            "--timing-mode",
+            args.timing_mode,
             "--swing-ratio",
             args.swing_ratio,
             "--grid-divisions",

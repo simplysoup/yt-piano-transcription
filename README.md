@@ -7,8 +7,8 @@ URL or local audio/video
   -> yt-dlp (URL only)
   -> ffmpeg mono WAV at 44.1 kHz
   -> Transkun performance MIDI (kept unchanged)
-  -> beat-grid/swing score pass
-  -> full and ornament-simplified MIDI, MusicXML, and optional MuseScore PDFs
+  -> timing-preserving full/simplified scores (default)
+  -> optional explicit grid-quantized alternative
 ```
 
 For solo piano this deliberately does **not** denoise or run source separation. Those steps can remove note attacks/harmonics or add separation artifacts.
@@ -20,54 +20,63 @@ For solo piano this deliberately does **not** denoise or run source separation. 
 - `ffmpeg` on `PATH`
 - MuseScore 4 on `PATH` for PDF output (or provide its executable with `--musescore`). On some Linux installs the executable is named `mscore` (for example `/usr/bin/mscore`), not `musescore`.
 
-Install dependencies:
+Install the default dependencies:
 
 ```bash
 uv sync --python 3.11
+```
+
+For the optional HTDemucs six-stem/piano separation experiment, install the extra:
+
+```bash
+uv sync --python 3.11 --extra separation
 ```
 
 The default inference device is CPU. For CUDA, install a CUDA-enabled PyTorch build compatible with your GPU, verify `torch.cuda.is_available()`, and pass `--device cuda`.
 
 ## Run
 
-For a piece with a steady tempo, grid mode is an optional alternative. The example uses a 2:1 swing ratio as a starting point; adjust it for the performance.
+The default score pass preserves Transkun's performed note onsets and lengths; it does not impose a fixed tempo or swing ratio:
 
 ```bash
 uv run python pipeline.py 'VIDEO_URL' \
-  --output-dir output/piano-recording \
-  --score-bpm 120 --meter 4/4 --swing-ratio 2:1
+  --output-dir output/piano-recording --meter 4/4
 ```
 
-For other pieces, omit `--score-bpm` to estimate it from the audio, but check for half/double-time errors. Tempo estimates can be half or double time, so verify them. Meter is not automatically inferred; the default is 4/4. Use `--swing-ratio 1:1` for straight timing. `--key` overrides the automatically inferred key signature.
-
-The score pass can also be run again **without downloading or transcribing** from an existing Transkun MIDI:
+The score pass can be rerun from an existing Transkun MIDI without downloading or transcribing again:
 
 ```bash
 uv run python scoreify.py output/piano-recording/transcription.mid \
-  --output-dir output/piano-recording \
-  --bpm 120 --meter 4/4 --swing-ratio 2:1
+  --output-dir output/piano-recording --timing-mode preserve --meter 4/4
+```
+
+An experimental fixed-grid alternative is opt-in. It uses one global tempo and may shift note events; only use it when that is desired:
+
+```bash
+uv run python scoreify.py output/piano-recording/transcription.mid \
+  --output-dir output/grid-test --timing-mode grid \
+  --bpm 93 --meter 4/4 --swing-ratio 2:1
 ```
 
 ## Outputs
 
 - `audio.wav` — normalized source audio supplied to Transkun
-- `transcription.mid` — original Transkun performance MIDI; never modified by score cleanup
-- `score.mid` — beat-grid/swing-normalized MIDI, all notes retained
-- `score_simplified.mid` — same score with conservative ornament candidates removed
-- `ornaments.mid` / `ornaments.json` — candidate ornament notes in an isolated MIDI plus a reviewable list; heuristic candidates can be false positives
+- `transcription.mid` — original Transkun performance MIDI; never modified
+- `score.mid` — in preserve mode, byte-for-byte copy of the performance MIDI
+- `score_simplified.mid` — ornament-candidate notes removed, with all remaining note times preserved
+- `ornaments.mid` / `ornaments.json` — candidate ornament notes isolated at their original times, plus a reviewable list; heuristic candidates can be false positives
 - `score.musicxml` / `score.pdf` — full score
 - `score_simplified.musicxml` / `score_simplified.pdf` — simplified alternative
 
 `--skip-pdf` omits both PDF renders. Use `--help` on either script for all controls.
 
-## Score cleanup controls and limitations
+## Timing and notation controls
 
-- `--score-bpm` sets the quarter-note tempo. The audio beat tracker can choose half or double time; manual overrides are recommended for known pieces.
-- `--meter 3/4` sets the time signature; default `4/4` is only a fallback, not meter inference.
-- `--swing-ratio 2:1` maps swung eighth offbeats to conventional even eighth-note notation and adds a swing marking. `1:1` keeps a straight grid. This is a constant-tempo/constant-swing first pass; it does not model rubato or changing swing feel bar by bar.
+- `--timing-mode preserve` is the default. It preserves performance MIDI timing and does not emit a claimed BPM or swing marking. The resulting score may still have intricate notation because expressive timing is retained.
+- `--timing-mode grid` is experimental. It requires `--bpm` or estimates tempo from audio, then snaps note events to a global grid. Beat trackers can select half/double time; automatic estimates can be half or double time, so verify them rather than treating them as ground truth. `--swing-ratio` only affects this opt-in mode.
+- `--meter 4/4` sets the score meter; the default is 4/4, but meter is not automatically inferred.
 - The key signature is inferred from the transcription unless overridden with `--key 'C major'`; key analysis can be wrong on modal or highly chromatic music.
-- `--grid-divisions 4` quantizes to sixteenth-note score positions per beat; choose 2 for eighths or 8 for 32nds. The beat phase is fitted from MIDI note onsets unless `--beat-offset` is supplied.
-- Ornament detection is deliberately conservative and heuristic. It identifies short upper-line runs before longer notes, not definitive grace notes/trills. Review `ornaments.json`; compare full and simplified PDFs before using the simplified score.
-- Grand-staff assignment remains a pitch heuristic: notes below `--split-pitch 60` go to bass staff; notes at/above it go to treble. It does not infer hands or handle hand-crossing intelligently. Review the output in MuseScore.
+- Ornament detection is deliberately conservative and heuristic. It identifies short upper-line runs before longer notes, not definitive grace notes/trills. Review `ornaments.json`; compare full and simplified scores before using the simplified one.
+- Grand-staff assignment remains a pitch heuristic: notes below `--split-pitch 60` go to bass staff; notes at/above it go to treble. It does not infer hands or handle hand-crossing intelligently.
 
-The score pass is an editable prototype, not an automatic professional engraving system. Preserve the performance MIDI and review meter, beat phase, quantization, ornaments, and staff assignment against the recording.
+The score pass is an editable prototype, not an automatic professional engraving system. Preserve the performance MIDI and review the meter, notation, ornaments, and staff assignment against the recording.
