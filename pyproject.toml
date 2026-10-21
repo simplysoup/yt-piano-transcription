@@ -1,0 +1,14 @@
+[project]
+name = "piano-transcription-pipeline"
+version = "0.1.0"
+description = "Solo piano audio/video transcription to MIDI, MusicXML, and PDF using Transkun"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "music21>=9.1",
+    "setuptools<81", # Transkun currently imports pkg_resources at runtime.
+    "transkun",
+    "yt-dlp",
+]
+
+[tool.uv]
+package = false
