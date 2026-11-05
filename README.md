@@ -1,6 +1,8 @@
 # Solo piano transcription pipeline
 
-A local pipeline for videos/audio you own or are authorized to process:
+Transcribe authorized solo-piano recordings into performance MIDI, then generate full and simplified MusicXML/PDF scores. Timing is preserved by default; an experimental grid-based pass is optional.
+
+The pipeline accepts video/audio you own or are authorized to process:
 
 ```text
 URL or local audio/video

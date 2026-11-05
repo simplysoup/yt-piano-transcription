@@ -1,7 +1,7 @@
 [project]
 name = "piano-transcription-pipeline"
 version = "0.1.0"
-description = "Solo piano audio/video transcription to MIDI, MusicXML, and PDF using Transkun"
+description = "Transcribe authorized solo-piano recordings to MIDI and timing-preserving sheet music"
 requires-python = ">=3.10,<3.12"
 dependencies = [
     "music21>=9.1",
