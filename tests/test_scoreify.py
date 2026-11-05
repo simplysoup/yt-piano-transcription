@@ -3,7 +3,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import numpy as np
 import pretty_midi
 
 from scoreify import (
@@ -20,6 +19,14 @@ class ScoreifyTests(unittest.TestCase):
     def test_parse_meter_and_swing(self):
         self.assertEqual(parse_meter("3/4"), (3, 4))
         self.assertEqual(parse_swing_ratio("2:1"), 2.0)
+
+    def test_rejects_invalid_meter_and_swing(self):
+        for meter in ("", "4/3", "0/4", "three/four"):
+            with self.subTest(meter=meter), self.assertRaises(ValueError):
+                parse_meter(meter)
+        for ratio in ("", "1:2", "2:0", "fast"):
+            with self.subTest(ratio=ratio), self.assertRaises(ValueError):
+                parse_swing_ratio(ratio)
 
     def test_swung_eighth_maps_to_even_notated_eighth(self):
         beat = 60 / 158

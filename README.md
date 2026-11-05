@@ -11,7 +11,7 @@ URL or local audio/video
   -> optional explicit grid-quantized alternative
 ```
 
-For solo piano this deliberately does **not** denoise or run source separation. Those steps can remove note attacks/harmonics or add separation artifacts.
+For solo piano this deliberately does **not** denoise or run source separation. Source separation was evaluated on test material and removed real notes, so it is not part of the supported pipeline.
 
 ## Requirements
 
@@ -20,16 +20,22 @@ For solo piano this deliberately does **not** denoise or run source separation. 
 - `ffmpeg` on `PATH`
 - MuseScore 4 on `PATH` for PDF output (or provide its executable with `--musescore`). On some Linux installs the executable is named `mscore` (for example `/usr/bin/mscore`), not `musescore`.
 
-Install the default dependencies:
+For MIDI-to-score conversion only, install the base dependencies:
 
 ```bash
 uv sync --python 3.11
 ```
 
-For the optional HTDemucs six-stem/piano separation experiment, install the extra:
+For Transkun audio transcription, add the `transcription` extra. Add `youtube` when the input is a URL rather than a local file:
 
 ```bash
-uv sync --python 3.11 --extra separation
+uv sync --python 3.11 --extra transcription --extra youtube
+```
+
+Automatic tempo estimation in grid mode also requires the `tempo-estimation` extra. It is not needed when you provide `--bpm`:
+
+```bash
+uv sync --python 3.11 --extra transcription --extra youtube --extra tempo-estimation
 ```
 
 The default inference device is CPU. For CUDA, install a CUDA-enabled PyTorch build compatible with your GPU, verify `torch.cuda.is_available()`, and pass `--device cuda`.
@@ -38,24 +44,33 @@ The default inference device is CPU. For CUDA, install a CUDA-enabled PyTorch bu
 
 The default score pass preserves Transkun's performed note onsets and lengths; it does not impose a fixed tempo or swing ratio:
 
+For a local recording:
+
 ```bash
-uv run python pipeline.py 'VIDEO_URL' \
+uv run --no-sync python pipeline.py /path/to/piano-recording.wav \
+  --output-dir output/piano-recording --meter 4/4
+```
+
+For a video URL, install the `youtube` extra and replace `VIDEO_URL` with a URL you are authorized to process:
+
+```bash
+uv run --no-sync python pipeline.py 'VIDEO_URL' \
   --output-dir output/piano-recording --meter 4/4
 ```
 
 The score pass can be rerun from an existing Transkun MIDI without downloading or transcribing again:
 
 ```bash
-uv run python scoreify.py output/piano-recording/transcription.mid \
+uv run --no-sync python scoreify.py output/piano-recording/transcription.mid \
   --output-dir output/piano-recording --timing-mode preserve --meter 4/4
 ```
 
 An experimental fixed-grid alternative is opt-in. It uses one global tempo and may shift note events; only use it when that is desired:
 
 ```bash
-uv run python scoreify.py output/piano-recording/transcription.mid \
+uv run --no-sync python scoreify.py output/piano-recording/transcription.mid \
   --output-dir output/grid-test --timing-mode grid \
-  --bpm 93 --meter 4/4 --swing-ratio 2:1
+  --bpm 120 --meter 4/4 --swing-ratio 2:1
 ```
 
 ## Outputs
@@ -73,10 +88,14 @@ uv run python scoreify.py output/piano-recording/transcription.mid \
 ## Timing and notation controls
 
 - `--timing-mode preserve` is the default. It preserves performance MIDI timing and does not emit a claimed BPM or swing marking. The resulting score may still have intricate notation because expressive timing is retained.
-- `--timing-mode grid` is experimental. It requires `--bpm` or estimates tempo from audio, then snaps note events to a global grid. Beat trackers can select half/double time; automatic estimates can be half or double time, so verify them rather than treating them as ground truth. `--swing-ratio` only affects this opt-in mode.
+- `--timing-mode grid` is experimental. It requires `--bpm` or the `tempo-estimation` extra to estimate tempo from `audio.wav`, then snaps note events to a global grid. Beat trackers can select half/double time, so verify estimates rather than treating them as ground truth. `--swing-ratio` only affects this opt-in mode.
 - `--meter 4/4` sets the score meter; the default is 4/4, but meter is not automatically inferred.
 - The key signature is inferred from the transcription unless overridden with `--key 'C major'`; key analysis can be wrong on modal or highly chromatic music.
 - Ornament detection is deliberately conservative and heuristic. It identifies short upper-line runs before longer notes, not definitive grace notes/trills. Review `ornaments.json`; compare full and simplified scores before using the simplified one.
 - Grand-staff assignment remains a pitch heuristic: notes below `--split-pitch 60` go to bass staff; notes at/above it go to treble. It does not infer hands or handle hand-crossing intelligently.
 
 The score pass is an editable prototype, not an automatic professional engraving system. Preserve the performance MIDI and review the meter, notation, ornaments, and staff assignment against the recording.
+
+## License
+
+No license has been selected for this repository yet. Until one is added, assume the code is not licensed for reuse or redistribution.

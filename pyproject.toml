@@ -4,17 +4,21 @@ version = "0.1.0"
 description = "Solo piano audio/video transcription to MIDI, MusicXML, and PDF using Transkun"
 requires-python = ">=3.10,<3.12"
 dependencies = [
-    "librosa>=0.11",
     "music21>=9.1",
+    "numpy>=1.24",
     "pretty-midi>=0.2.10",
-    "setuptools<81", # Transkun currently imports pkg_resources at runtime.
-    "transkun",
-    "yt-dlp",
 ]
 
 [project.optional-dependencies]
-separation = [
-    "demucs>=4.1.0",
+transcription = [
+    "setuptools<81", # Transkun currently imports pkg_resources at runtime.
+    "transkun",
+]
+youtube = [
+    "yt-dlp",
+]
+tempo-estimation = [
+    "librosa>=0.11",
 ]
 
 [tool.uv]
